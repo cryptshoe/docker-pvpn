@@ -1,99 +1,154 @@
 # Proton VPN WireGuard Docker Image
 
-Containerized WireGuard client for Proton VPN configs based on Ubuntu. This image uses wg-quick to bring up a tunnel from your Proton-provided WireGuard configuration files.
+Containerized WireGuard client for Proton VPN using wg-quick and your Proton-provided WireGuard configuration files. No ProtonVPN CLI, no keyring prompts — designed for headless use.
 
 Important: This project is not affiliated with Proton AG.
 
-## Contents
+## What this provides
 
-- dockerfile — Dockerfile that builds the image
-- start_wireguard.sh — Entrypoint script invoked by the container
+- WireGuard-only VPN client inside a container
+- Picks a .conf by explicit name, server code, or country code
+- Optional IPv6 routing addition (adds ::/0 to AllowedIPs)
+- Optional removal of DNS= lines to avoid resolver dependencies in containers
+- Clean bring-up/down via wg-quick (interface wg0)
+
+## Repository contents
+
+- dockerfile — Dockerfile for the image
+- start_wireguard.sh — Entrypoint script
+- .env — Example environment defaults
 
 ## Requirements
 
-- Linux host with Docker and `/dev/net/tun` available
-- Container must be granted:
-  - `--cap-add=NET_ADMIN`
-  - `--device /dev/net/tun`
-- Proton VPN account to download WireGuard configuration files from your dashboard
-- WireGuard configuration files mounted into the container (default path `/wireguard`)
+- Linux host with Docker and /dev/net/tun
+- Container flags:
+  - --cap-add=NET_ADMIN
+  - --device /dev/net/tun
+- Proton VPN account and WireGuard configuration files downloaded from your Proton dashboard
 
-> Proton advises keeping WireGuard `.conf` filenames under 15 characters.
+Notes
+- Proton recommends WireGuard .conf filenames under 15 characters.
+- Do not commit your .conf files; they contain keys.
+
+## Get Proton WireGuard configs
+
+1) Sign in to your Proton account and go to Downloads → WireGuard configuration
+2) Generate and download .conf files for servers/countries you want to use
+3) Keep filenames under 15 characters (rename if necessary)
+4) Place them in a directory you will mount into the container (e.g., /path/to/wg-configs)
+
+IPv6 note
+- Proton’s default WireGuard configs are IPv4-only. This image can add ::/0 automatically if you set PVPN_IPV6=on.
 
 ## Build
 
 Local build:
 - docker build -t docker-pvpn -f dockerfile .
 
-GitHub Actions build (optional):
-- A workflow example exists at `.github/workflows/docker-pvpn.yml` that builds on pushes/PRs and pushes to GHCR on non-PR events.
-- Resulting image: `ghcr.io/<owner>/docker-pvpn:latest` (plus branch and SHA tags)
+CI build:
+- See .github/workflows/docker-pvpn.yml (buildx multi-arch, pushes to GHCR on non-PR events)
 
-## Run
+## Quick start (docker run)
 
-Mount your Proton WireGuard config files into the container at `/wireguard` (or set `PVPN_WG_DIR` to another path). The entrypoint will select a config based on environment variables and bring up the interface `wg0` using `wg-quick`.
+Mount your configs and choose by country:
 
-Example: choose by country code (first match):
-
-```
-docker run --rm -it \
-  --cap-add=NET_ADMIN \
-  --device /dev/net/tun \
-  -v /path/to/your/wireguard/configs:/wireguard:ro \
-  -e PVPN_COUNTRY='CH' \
-  -e PVPN_WG_STRATEGY='first' \
-  -e PVPN_IPV6='on' \
-  -e PVPN_WG_DNS='off' \
-  docker-pvpn
-```
+- docker run --rm -it \
+    --cap-add=NET_ADMIN \
+    --device /dev/net/tun \
+    -v /path/to/wg-configs:/wireguard:ro \
+    -e PVPN_COUNTRY=CH \
+    -e PVPN_WG_STRATEGY=first \
+    -e PVPN_IPV6=on \
+    -e PVPN_WG_DNS=off \
+    docker-pvpn
 
 Other selection methods:
-- `PVPN_WG_NAME` — exact file name (with or without `.conf`), e.g., `swiss1-CH-5.conf` or `swiss1-CH-5`
-- `PVPN_SERVER` — basename/prefix match, e.g., `swiss1-CH-5`
-- `PVPN_COUNTRY` — country code (e.g., `CH`, `US`, `DE`); strategy can be `first` (default) or `random`
-- If only one `.conf` exists in the directory, it will be selected automatically.
+- PVPN_WG_NAME: exact filename (with or without .conf), e.g., swiss1-CH-5.conf or swiss1-CH-5
+- PVPN_SERVER: basename/prefix match, e.g., swiss1-CH-5
+- PVPN_COUNTRY: country code (e.g., CH, US, DE). If multiple matches, use PVPN_WG_STRATEGY=random (requires shuf) or first
+- If there is only one .conf, it is chosen automatically
+
+## Docker Compose example
+
+version: "3.8"
+services:
+  pvpn:
+    image: docker-pvpn
+    build:
+      context: .
+      dockerfile: dockerfile
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      PVPN_COUNTRY: CH
+      PVPN_WG_STRATEGY: first
+      PVPN_IPV6: "on"
+      PVPN_WG_DNS: "off"
+    volumes:
+      - /path/to/wg-configs:/wireguard:ro
+    restart: unless-stopped
+
+  app:
+    image: your-app
+    network_mode: "service:pvpn"  # Route app through the VPN container
+    depends_on:
+      - pvpn
 
 ## Environment variables
 
-- `PVPN_WG_DIR` — directory containing `.conf` files (default `/wireguard`)
-- `PVPN_WG_NAME` — explicit config filename or basename
-- `PVPN_SERVER` — server basename/prefix to match
-- `PVPN_COUNTRY` — country code for selection
-- `PVPN_WG_STRATEGY` — `first` (default) or `random` to choose among matches
-- `PVPN_IPV6` — `on` to append `::/0` to AllowedIPs if missing (default `off`)
-- `PVPN_WG_DNS` — `on` to keep `DNS=` lines, `off` to remove them (default `on`)
+- PVPN_WG_DIR: directory of .conf files (default /wireguard)
+- PVPN_WG_NAME: explicit config filename or basename (preferred exact match)
+- PVPN_SERVER: server basename/prefix to match (e.g., swiss1-CH-5)
+- PVPN_COUNTRY: country code to select by (e.g., CH, US, DE)
+- PVPN_WG_STRATEGY: first (default) or random when multiple match
+- PVPN_IPV6: on to append ::/0 to AllowedIPs if missing (default off)
+- PVPN_WG_DNS: on to keep DNS= lines, off to strip them (default on)
+- TZ: optional timezone for logs
 
-## Verifying connection
+DNS behavior
+- If your config includes DNS=, keeping it on may require resolvconf/systemd-resolved in the container. If you don’t want DNS managed inside the container, set PVPN_WG_DNS=off.
 
-- Inside the container: `wg show` (or `ip addr show wg0` if `wg` is not available)
-- From outside: check your public IP using a web service while routing through this container
+## Verifying the connection
+
+- Inside the container: wg show
+- Alternatively: ip addr show wg0
+- External check: use a web IP checker from an app sharing the pvpn container’s network
 
 ## Using as a gateway for another container
 
-Run this container and then attach another container to its network namespace:
+Run the VPN container, then attach your app to its network namespace so all traffic egresses via WireGuard:
 
-```
-docker run -d --name pvpn --cap-add=NET_ADMIN --device /dev/net/tun \
-  -v /path/to/configs:/wireguard:ro \
-  -e PVPN_COUNTRY=CH docker-pvpn
+- docker run -d --name pvpn --cap-add=NET_ADMIN --device /dev/net/tun \
+    -v /path/to/wg-configs:/wireguard:ro \
+    -e PVPN_COUNTRY=CH docker-pvpn
 
-docker run -d --network container:pvpn your-app-image
-```
+- docker run -d --network container:pvpn your-app-image
+
+Notes on kill switch behavior
+- This image does not alter host or container-wide iptables beyond wg-quick defaults. For stricter isolation, keep your apps using --network container:pvpn or implement policy routing/firewall rules on the host as needed.
 
 ## Troubleshooting
 
-- TUN device:
-  - Ensure host has `/dev/net/tun` and container has `--device /dev/net/tun` and `--cap-add=NET_ADMIN`
-- DNS inside container:
-  - If your config includes `DNS=` and you want it applied, ensure `resolvconf` or systemd-resolved integration is available; otherwise set `PVPN_WG_DNS=off` to skip DNS changes inside the container
-- IPv6 routing:
-  - Set `PVPN_IPV6=on` to add `::/0` to AllowedIPs if your host supports IPv6 through the tunnel
+- /dev/net/tun missing:
+  - Ensure the device is present on the host and passed with --device /dev/net/tun and --cap-add=NET_ADMIN
+
+- No configs found:
+  - Confirm you mounted the directory with .conf files to /wireguard or set PVPN_WG_DIR
+
+- DNS resolution issues:
+  - Either enable DNS= handling (PVPN_WG_DNS=on) and ensure resolvconf/systemd-resolved works in the image, or disable it (PVPN_WG_DNS=off)
+
+- IPv6 not routed:
+  - Set PVPN_IPV6=on to automatically add ::/0 if your environment supports IPv6 over the tunnel
+
 - Multiple matching configs:
-  - Use `PVPN_WG_STRATEGY=random` to vary the selection if `shuf` is available
+  - Use PVPN_WG_STRATEGY=random (requires shuf) or refine your selection with PVPN_WG_NAME or PVPN_SERVER
 
 ## CI/CD
 
-- See `.github/workflows/docker-pvpn.yml` for a GH Actions workflow that builds multi-arch images and publishes to GHCR.
+- See .github/workflows/docker-pvpn.yml for multi-arch builds and GHCR publishing
 
 ## License
 
