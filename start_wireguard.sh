@@ -15,6 +15,12 @@ cleanup() {
   if command -v wg-quick >/dev/null 2>&1; then
     wg-quick down wg0 || true
   fi
+  # Restore resolv.conf if we modified it
+  if [[ -n "${RESOLV_CONF_BACKUP:-}" && -f "$RESOLV_CONF_BACKUP" && -w /etc/resolv.conf ]]; then
+    log "Restoring /etc/resolv.conf"
+    cp -f "$RESOLV_CONF_BACKUP" /etc/resolv.conf || true
+    rm -f "$RESOLV_CONF_BACKUP" || true
+  fi
   exit 0
 }
 trap cleanup SIGINT SIGTERM
@@ -145,6 +151,12 @@ CONF_DST="/etc/wireguard/wg0.conf"
 # Start from source content
 CONF_CONTENT="$(cat "$CONF_SRC")"
 
+# Extract DNS servers from the original config (space-separated)
+DNS_SERVERS=""
+if grep -qE '^DNS\s*=' <<<"$CONF_CONTENT"; then
+  DNS_SERVERS="$(awk -F'=' '/^DNS[[:space:]]*=/ {v=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", v); gsub(",", " ", v); print v}' <<<"$CONF_CONTENT" | xargs)"
+fi
+
 # Optionally add IPv6 ::/0 to AllowedIPs if not present
 if [[ "$ENABLE_IPV6" =~ ^(on|true|1|yes)$ ]]; then
   if ! grep -qE '^AllowedIPs\s*=.*::/0' <<<"$CONF_CONTENT"; then
@@ -155,12 +167,10 @@ if [[ "$ENABLE_IPV6" =~ ^(on|true|1|yes)$ ]]; then
   fi
 fi
 
-# Optionally remove DNS lines if we want to avoid resolvconf/systemd-resolved dependency in containers
-if [[ "$WG_DNS" =~ ^(off|false|0|no)$ ]]; then
-  if grep -qE '^DNS\s*=' <<<"$CONF_CONTENT"; then
-    CONF_CONTENT="$(sed -E -e '/^DNS[[:space:]]*=.*/d' <<<"$CONF_CONTENT")"
-    log "Stripped DNS= lines from config (PVPN_WG_DNS=off)"
-  fi
+# Always remove DNS lines to avoid wg-quick calling resolvconf/systemd-resolved in containers
+if grep -qE '^DNS\s*=' <<<"$CONF_CONTENT"; then
+  CONF_CONTENT="$(sed -E -e '/^DNS[[:space:]]*=.*/d' <<<"$CONF_CONTENT")"
+  log "Removed DNS= lines from config to avoid resolvconf"
 fi
 
 # Write final config
@@ -170,6 +180,25 @@ chmod 600 "$CONF_DST"
 # Bring up WireGuard
 log "Bringing up WireGuard interface: wg0"
 wg-quick up wg0
+
+# Apply DNS by writing /etc/resolv.conf directly when enabled
+if [[ "$WG_DNS" =~ ^(on|true|1|yes)$ && -n "${DNS_SERVERS:-}" ]]; then
+  if [ -w /etc/resolv.conf ]; then
+    RESOLV_CONF_BACKUP="/etc/resolv.conf.pvpn-backup"
+    if [ ! -f "$RESOLV_CONF_BACKUP" ]; then
+      cp -f /etc/resolv.conf "$RESOLV_CONF_BACKUP" || true
+    fi
+    {
+      for ns in $DNS_SERVERS; do
+        echo "nameserver $ns"
+      done
+    } > /etc/resolv.conf || true
+    chmod 644 /etc/resolv.conf || true
+    log "Applied DNS servers to /etc/resolv.conf: $DNS_SERVERS"
+  else
+    log "WARNING: /etc/resolv.conf is not writable; cannot apply DNS"
+  fi
+fi
 
 # Status
 if command -v wg >/dev/null 2>&1; then
