@@ -67,23 +67,36 @@ KS="${PVPN_KILLSWITCH:-on}"
 DNS="${PVPN_DNS:-on}"
 
 log "Configuring: protocol=${PROTO}, killswitch=${KS}, dns=${DNS}"
-pvpn configure \
-  --protocol "$PROTO" \
-  --killswitch "$KS" \
-  --dns "$DNS" \
-  --auto-connect off \
-  --ip-leak-protection on || true
+# Try new-style config flags if supported; otherwise fall back to specific subcommands
+if pvpn config --help 2>/dev/null | grep -q -- "--protocol"; then
+  pvpn config \
+    --protocol "$PROTO" \
+    --killswitch "$KS" \
+    --dns "$DNS" \
+    --auto-connect off \
+    --ip-leak-protection on || true
+else
+  # Fallbacks for older/newer CLI variants
+  if pvpn ks --help >/dev/null 2>&1; then
+    case "$KS" in
+      on|ON|On) pvpn ks --on || true ;;
+      off|OFF|Off) pvpn ks --off || true ;;
+    esac
+  fi
+  # No reliable non-interactive flag for DNS across versions; rely on defaults
+  :
+fi
 
 # Connect according to preference
 if [[ -n "${PVPN_SERVER:-}" ]]; then
   log "Connecting to server: $PVPN_SERVER"
-  pvpn c -s "$PVPN_SERVER" -f
+  pvpn c -s "$PVPN_SERVER" -f -p "$PROTO"
 elif [[ -n "${PVPN_COUNTRY:-}" ]]; then
   log "Connecting to country: $PVPN_COUNTRY"
-  pvpn c -c "$PVPN_COUNTRY" -f
+  pvpn c -c "$PVPN_COUNTRY" -f -p "$PROTO"
 else
   log "Connecting to fastest server..."
-  pvpn c -f
+  pvpn c -f -p "$PROTO"
 fi
 
 # Report status
