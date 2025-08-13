@@ -9,6 +9,18 @@ set -euo pipefail
 
 log() { echo "[$(date -Iseconds)] $*"; }
 
+# Ensure a D-Bus session exists for keyring/ProtonVPN CLI
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  if command -v dbus-run-session >/dev/null 2>&1; then
+    exec dbus-run-session -- "$0" "$@"
+  elif command -v dbus-daemon >/dev/null 2>&1; then
+    # Fallback: start a session bus manually and export address
+    eval "$(dbus-daemon --session --fork --print-address=1 --print-pid=1)"
+  else
+    echo "[$(date -Iseconds)] WARNING: No D-Bus available; protonvpn-cli may fail." >&2
+  fi
+fi
+
 cleanup() {
   log "Shutting down, attempting to disconnect..."
   if command -v protonvpn-cli >/dev/null 2>&1; then
