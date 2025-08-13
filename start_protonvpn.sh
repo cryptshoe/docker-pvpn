@@ -21,6 +21,16 @@ if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
   fi
 fi
 
+# Start keyring for Secret Service (used by protonvpn_nm_lib)
+if command -v gnome-keyring-daemon >/dev/null 2>&1; then
+  # Make sure XDG directories exist for the daemon
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime}"
+  mkdir -p "$XDG_RUNTIME_DIR"
+  eval "$(gnome-keyring-daemon --start --components=secrets)"
+  export GNOME_KEYRING_CONTROL GNOME_KEYRING_PID
+  export SSH_AUTH_SOCK
+fi
+
 cleanup() {
   log "Shutting down, attempting to disconnect..."
   if command -v protonvpn-cli >/dev/null 2>&1; then

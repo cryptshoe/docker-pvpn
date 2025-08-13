@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     ca-certificates \
     software-properties-common \
+    dbus-user-session \
+    gnome-keyring \
+    libsecret-1-0 \
+    python3-secretstorage \
     # ProtonVPN runtime deps
     openvpn \
     wireguard-tools \
