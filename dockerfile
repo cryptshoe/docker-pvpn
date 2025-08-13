@@ -18,9 +18,12 @@ RUN apt-get update && apt-get install -y \
     resolvconf \
     && rm -rf /var/lib/apt/lists/*
 
-# Add ProtonVPN repository (pattern retained from your setup)
-RUN curl -s https://repo.protonvpn.com/debian/public_key.asc | apt-key add - && \
-    add-apt-repository "deb https://repo.protonvpn.com/debian unstable main"
+# Add ProtonVPN repository using keyring (apt-key is deprecated)
+RUN set -eux; \
+    install -m 0755 -d /etc/apt/keyrings; \
+    curl -fsSL https://repo.protonvpn.com/debian/public_key.asc | gpg --dearmor -o /etc/apt/keyrings/protonvpn.gpg; \
+    chmod a+r /etc/apt/keyrings/protonvpn.gpg; \
+    echo 'deb [signed-by=/etc/apt/keyrings/protonvpn.gpg] https://repo.protonvpn.com/debian unstable main' > /etc/apt/sources.list.d/protonvpn.list
 
 # Install ProtonVPN CLI
 RUN apt-get update && apt-get install -y protonvpn-cli && \
