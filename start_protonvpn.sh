@@ -46,15 +46,15 @@ pvpn() { protonvpn-cli "$@"; }
 if [[ -n "${PVPN_USERNAME:-}" && -n "${PVPN_PASSWORD:-}" ]]; then
   log "Logging in with provided credentials..."
   pvpn logout >/dev/null 2>&1 || true
-  if pvpn --help 2>&1 | grep -q -- '--password'; then
+  if pvpn login --help 2>&1 | grep -E -q -- '(--password|-p\b)'; then
     pvpn login --username "$PVPN_USERNAME" --password "$PVPN_PASSWORD" || {
-      log "ERROR: Login failed with --password."
+      log "ERROR: Login failed with --username/--password flags."
       exit 1
     }
   else
-    # Fallback attempt (may not work on all versions)
-    if ! printf '%s\n%s\n' "$PVPN_USERNAME" "$PVPN_PASSWORD" | pvpn login; then
-      log "Non-interactive login failed; ensure an existing session or use interactive login."
+    # Fallback: provide password (and optional 2FA) via stdin for username-based login
+    if ! printf '%s\n%s\n' "$PVPN_PASSWORD" "${PVPN_2FA:-}" | pvpn login "$PVPN_USERNAME"; then
+      log "Non-interactive login failed. Provide correct credentials, set PVPN_2FA if required, or create a session interactively."
     fi
   fi
 else
