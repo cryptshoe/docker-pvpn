@@ -200,6 +200,11 @@ if [[ "$WG_DNS" =~ ^(on|true|1|yes)$ && -n "${DNS_SERVERS:-}" ]]; then
   fi
 fi
 
+# Start SOCKS5 proxy on configurable port, no auth
+PROXY_PORT="${PROXY_PORT:-1080}"
+log "Starting SOCKS5 proxy on port $PROXY_PORT"
+microsocks -p "$PROXY_PORT" &
+
 # Status
 if command -v wg >/dev/null 2>&1; then
   wg show
@@ -207,6 +212,6 @@ else
   ip addr show wg0 || true
 fi
 
-log "WireGuard connected. Container is now idling."
+log "WireGuard and SOCKS5 proxy running. Container is now idling."
 sleep infinity &
 wait $!

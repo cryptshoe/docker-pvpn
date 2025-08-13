@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  wireguard:
+    build: .
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    env_file:
+      - .env
+    volumes:
+      - ./wireguard:/wireguard   # Mount your WireGuard config directory here
+    ports:
+      - "51820:51820/udp"       # WireGuard UDP port
+      - "${PROXY_PORT}:${PROXY_PORT}/tcp"  # Proxy port from .env
+    restart: unless-stopped
+    networks:
+      - wireguard_net
