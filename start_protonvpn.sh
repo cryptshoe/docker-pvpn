@@ -8,6 +8,8 @@ set -euo pipefail
 # - Keeps the container running and disconnects on shutdown
 
 log() { echo "[$(date -Iseconds)] $*"; }
+# Force ProtonVPN CLI to avoid system keyrings in headless containers
+export PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring"
 
 # Ensure a D-Bus session exists for keyring/ProtonVPN CLI
 if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
@@ -22,7 +24,7 @@ if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
 fi
 
 # Start keyring for Secret Service (used by protonvpn_nm_lib)
-if command -v gnome-keyring-daemon >/dev/null 2>&1; then
+if [[ "${PVPN_USE_KEYRING:-0}" = "1" ]] && command -v gnome-keyring-daemon >/dev/null 2>&1; then
   # Make sure XDG directories exist for the daemon
   export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime}"
   mkdir -p "$XDG_RUNTIME_DIR"
@@ -57,14 +59,22 @@ if [[ -n "${PVPN_USERNAME:-}" && -n "${PVPN_PASSWORD:-}" ]]; then
   log "Logging in with provided credentials..."
   pvpn logout >/dev/null 2>&1 || true
   if pvpn login --help 2>&1 | grep -E -q -- '(--password|-p\b)'; then
-    pvpn login --username "$PVPN_USERNAME" --password "$PVPN_PASSWORD" || {
-      log "ERROR: Login failed with --username/--password flags."
-      exit 1
-    }
+    if pvpn login --help 2>&1 | grep -E -q -- '--2fa|--otp' && [[ -n "${PVPN_2FA:-}" ]]; then
+      pvpn login --username "$PVPN_USERNAME" --password "$PVPN_PASSWORD" --2fa "$PVPN_2FA" || {
+        log "ERROR: Login failed with --username/--password/--2fa flags."
+        exit 1
+      }
+    else
+      pvpn login --username "$PVPN_USERNAME" --password "$PVPN_PASSWORD" || {
+        log "ERROR: Login failed with --username/--password flags."
+        exit 1
+      }
+    fi
   else
     # Fallback: provide password (and optional 2FA) via stdin for username-based login
     if ! printf '%s\n%s\n' "$PVPN_PASSWORD" "${PVPN_2FA:-}" | pvpn login "$PVPN_USERNAME"; then
       log "Non-interactive login failed. Provide correct credentials, set PVPN_2FA if required, or create a session interactively."
+      exit 1
     fi
   fi
 else
