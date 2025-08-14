@@ -203,7 +203,7 @@ fi
 # Start SOCKS5 proxy on configurable port, no auth
 PROXY_PORT="${PROXY_PORT:-1080}"
 log "Starting SOCKS5 proxy on port $PROXY_PORT"
-microsocks -p "$PROXY_PORT" &
+microsocks -p "$PROXY_PORT" -i 0.0.0.0 &
 
 # Status
 if command -v wg >/dev/null 2>&1; then
