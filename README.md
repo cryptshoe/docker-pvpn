@@ -3,6 +3,9 @@
 Containerized WireGuard client for Proton VPN using wg-quick and your Proton-provided WireGuard configuration files. No ProtonVPN CLI, no keyring prompts — designed for headless use.  
 Important: This project is not affiliated with Proton AG.
 
+# Docker Desktop on Macos
+There is an issue with running this script after changing the configuration file. Docker desktop requries to be rebooted before changing the config file. 
+
 ---
 
 ## What this provides
