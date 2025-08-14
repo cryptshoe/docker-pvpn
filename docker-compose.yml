@@ -1,20 +1,28 @@
 version: "3.8"
 
 services:
-  wireguard:
-    build: .
-    container_name: wireguard
+  pvpn:
+    image: docker-pvpn
+    build:
+      context: .
+      dockerfile: dockerfile
     cap_add:
       - NET_ADMIN
     devices:
-      - /dev/net/tun
+      - /dev/net/tun:/dev/net/tun
     env_file:
       - .env
     volumes:
-      - ./wireguard:/wireguard   # Mount your WireGuard config directory here
+      - "${PVPN_WG_DIR}:/wireguard:ro"
     ports:
-      - "51820:51820/udp"       # WireGuard UDP port
-      - "${PROXY_PORT}:${PROXY_PORT}/tcp"  # Proxy port from .env
+      - "51820:51820/udp"
+      - "${PROXY_PORT}:${PROXY_PORT}/tcp"
     restart: unless-stopped
+
+  app:
+    image: your-app
+    network_mode: "service:pvpn"
+    depends_on:
+      - pvpn
     networks:
       - wireguard_net
