@@ -199,15 +199,14 @@ iptables -A FORWARD -i wg0 -o eth0 -j ACCEPT
 iptables -A FORWARD -i eth0 -o wg0 -j ACCEPT
 
 # Masquerade outbound traffic over WireGuard interface,
-# but exclude the VPN DNS server (10.2.0.1) to avoid breaking DNS resolution
-WG_DNS_IP="10.2.0.1"
+# but exclude the VPN DNS server (first one if multiple) to avoid breaking DNS resolution
+WG_DNS_IP="$(echo $DNS_SERVERS | awk '{print $1}')"
 iptables -t nat -A POSTROUTING ! -d "$WG_DNS_IP" -o wg0 -j MASQUERADE
 
 # WireGuard Routing Policy Setup
 # Extract WireGuard endpoint IP to add route for it via eth0 gateway to avoid routing loop
 WG_ENDPOINT_IP=$(wg show wg0 endpoints | awk '{print $2}' | cut -d':' -f1 || true)
 if [[ -n "$WG_ENDPOINT_IP" ]]; then
-  # Find default gateway interface and IP for eth0
   ETH0_GATEWAY=$(ip route show default dev eth0 | awk '/default/ {print $3}' || true)
   if [[ -n "$ETH0_GATEWAY" ]]; then
     ip route add "$WG_ENDPOINT_IP"/32 via "$ETH0_GATEWAY" dev eth0 || true
@@ -217,7 +216,6 @@ fi
 # Set routing rules using fwmark (0xca6c from wg setconf logs)
 log "Setting WireGuard fwmark policy routing"
 
-# Create routing table 51820 for VPN marked traffic
 ip rule add not fwmark 0xca6c lookup 51820 || true
 ip rule add table main suppress_prefixlength 0 || true
 ip route add default dev wg0 table 51820 || true

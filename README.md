@@ -50,74 +50,26 @@ IPv6 note:
 
 ---
 
-## Build
-
-Local build:
-
-docker build -t docker-pvpn -f dockerfile .
-
-CI build:  
-- See `.github/workflows/docker-pvpn.yml` (buildx multi-arch, pushes to GHCR on non-PR events)
-
----
 
 ## Quick start (docker run)
 
 Mount your configs and choose by country:
 
 ```
-docker run --rm -it \
+docker run --rm -it \                           
   --cap-add=NET_ADMIN \
   --device /dev/net/tun \
-  -v /path/to/wg-configs:/wireguard:ro \
-  -e PVPN_COUNTRY=CH \
+  -p 1080:1080/tcp \
+  -v /Users/dan/Documents/wireguard-pvpn-conf:/wireguard:ro \
+  -e PVPN_COUNTRY=US \
   -e PVPN_WG_STRATEGY=first \
-  -e PVPN_IPV6=on \
-  -e PVPN_WG_DNS=off \
+  -e PVPN_IPV6=off \
+  -e PVPN_WG_DNS=on \
   -e PROXY_PORT=1080 \
-  docker-pvpn
+  ghcr.io/cryptshoe/docker-pvpn:latest
   ```
 
-Other selection methods:  
-- `PVPN_WG_NAME`: exact filename (with or without `.conf`), e.g., `swiss1-CH-5.conf` or `swiss1-CH-5`  
-- `PVPN_SERVER`: basename/prefix match, e.g., `swiss1-CH-5`  
-- `PVPN_COUNTRY`: country code (e.g., `CH`, `US`, `DE`). If multiple matches, use `PVPN_WG_STRATEGY=random` (requires `shuf`) or `first`  
-- If there is only one `.conf`, it is chosen automatically  
-
----
-
-## Docker Compose example
-```
-version: "3.8"
-
-services:
-  pvpn:
-    image: docker-pvpn
-    build:
-      context: .
-      dockerfile: dockerfile
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    env_file:
-      - .env
-    volumes:
-      - /path/to/wg-configs:/wireguard:ro
-    ports:
-      - "51820:51820/udp"                    # WireGuard UDP port
-      - "${PROXY_PORT}:${PROXY_PORT}/tcp"   # SOCKS5 proxy port exposed from container
-    restart: unless-stopped
-
-  app:
-    image: your-app
-    network_mode: "service:pvpn"             # Route app through the VPN container
-    depends_on:
-      - pvpn
-```
----
-
-## Environment variables
+### Environment variables
 
 - `PVPN_WG_DIR`: directory of .conf files (default `/wireguard`)  
 - `PVPN_WG_NAME`: explicit config filename or basename (preferred exact match)  
