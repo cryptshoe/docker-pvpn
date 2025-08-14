@@ -184,19 +184,25 @@ wg-quick up wg0
 # Ensure IP forwarding is enabled for IPv4/IPv6
 log "Enabling IP forwarding"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
-sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null || true
+# Enable IPv6 forwarding if your VPN uses it
+sysctl -w net.ipv6.conf.all.forwarding=1 || true
 
-# Flush any existing NAT/FORWARD rules (optional - for clean state)
+# Flush existing iptables rules (optional, but clean)
 iptables -F
 iptables -t nat -F
 
-# Allow forwarding between wg0 and eth0
-log "Configuring iptables forwarding and NAT for wg0 <-> eth0"
+# Allow forwarding between WireGuard device and main interface
 iptables -A FORWARD -i wg0 -o eth0 -j ACCEPT
 iptables -A FORWARD -i eth0 -o wg0 -j ACCEPT
 
-# Masquerade outbound traffic via the tunnel
+# Masquerade outbound traffic over WireGuard interface
 iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
+
+# Verify
+sysctl net.ipv4.ip_forward
+sysctl net.ipv6.conf.all.forwarding
+iptables -L -v
+iptables -t nat -L -v
 
 # Apply DNS by writing /etc/resolv.conf directly when enabled
 if [[ "$WG_DNS" =~ ^(on|true|1|yes)$ && -n "${DNS_SERVERS:-}" ]]; then
