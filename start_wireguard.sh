@@ -6,6 +6,7 @@ set -euo pipefail
 # - Optionally appends IPv6 (::/0) to AllowedIPs
 # - Optionally strips DNS= lines to avoid resolvconf/systemd-resolved requirements in containers
 # - Copies to /etc/wireguard/wg0.conf and brings up the interface via wg-quick
+# - Configures routing and NAT to ensure traffic flows through WireGuard
 # - Keeps the container running and brings the interface down on shutdown
 
 log() { echo "[$(date -Iseconds)] $*"; }
@@ -23,7 +24,7 @@ cleanup() {
   fi
   exit 0
 }
-trap cleanup SIGINT SIGTERM
+trap cleanup SIGINT SIGTERM EXIT
 
 # Preflight checks
 if ! command -v wg-quick >/dev/null 2>&1; then
@@ -42,11 +43,11 @@ fi
 # Configuration sources
 WG_DIR="${PVPN_WG_DIR:-/wireguard}"
 STRATEGY="${PVPN_WG_STRATEGY:-first}"   # first|random
-ENABLE_IPV6="${PVPN_IPV6:-off}"         # on|off -> appends ::/0 when on
-WG_DNS="${PVPN_WG_DNS:-on}"             # on|off -> strip DNS= lines when off
-EXPLICIT_NAME="${PVPN_WG_NAME:-}"       # explicit .conf name or basename
-SERVER_CODE="${PVPN_SERVER:-}"          # e.g., swiss1-CH-5 (basename without .conf)
-COUNTRY_CODE_RAW="${PVPN_COUNTRY:-}"    # e.g., CH, US, DE
+ENABLE_IPV6="${PVPN_IPV6:-off}"          # on|off -> appends ::/0 when on
+WG_DNS="${PVPN_WG_DNS:-on}"              # on|off -> strip DNS= lines when off
+EXPLICIT_NAME="${PVPN_WG_NAME:-}"        # explicit .conf name or basename
+SERVER_CODE="${PVPN_SERVER:-}"           # e.g., swiss1-CH-5 (basename without .conf)
+COUNTRY_CODE_RAW="${PVPN_COUNTRY:-}"     # e.g., CH, US, DE
 
 # Normalize country code to uppercase if provided
 COUNTRY_CODE="${COUNTRY_CODE_RAW^^}"
@@ -161,7 +162,7 @@ fi
 if [[ "$ENABLE_IPV6" =~ ^(on|true|1|yes)$ ]]; then
   if ! grep -qE '^AllowedIPs\s*=.*::/0' <<<"$CONF_CONTENT"; then
     CONF_CONTENT="$(sed -E \
-      -e '/^AllowedIPs[[:space:]]*=/ { /::\\/0/! s/$/, ::\\/0/; }' \
+      -e '/^AllowedIPs[[:space:]]*=/ { /::\/0/! s/$/, ::\/0/; }' \
       <<<"$CONF_CONTENT")"
     log "Enabled IPv6 routing (::/0) in AllowedIPs"
   fi
@@ -181,26 +182,48 @@ chmod 600 "$CONF_DST"
 log "Bringing up WireGuard interface: wg0"
 wg-quick up wg0
 
-# Ensure IP forwarding is enabled for IPv4/IPv6
+# Enable IP forwarding for IPv4 and IPv6
 log "Enabling IP forwarding"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
-# Enable IPv6 forwarding if your VPN uses it
 sysctl -w net.ipv6.conf.all.forwarding=1 || true
 
-# Flush existing iptables rules (optional, but clean)
+# Flush existing iptables rules cleanly
 iptables -F
 iptables -t nat -F
+iptables -t mangle -F
+iptables -X
 
-# Allow forwarding between WireGuard device and main interface
+# Set up iptables forwarding and NAT rules
+log "Configuring iptables forwarding and NAT for wg0 <-> eth0"
 iptables -A FORWARD -i wg0 -o eth0 -j ACCEPT
 iptables -A FORWARD -i eth0 -o wg0 -j ACCEPT
-
-# Masquerade outbound traffic over WireGuard interface
 iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
 
-# Verify
+# WireGuard Routing Policy Setup
+# Extract WireGuard endpoint IP to add route for it via eth0 gateway to avoid routing loop
+WG_ENDPOINT_IP=$(wg show wg0 endpoints | awk '{print $2}' | cut -d':' -f1 || true)
+if [[ -n "$WG_ENDPOINT_IP" ]]; then
+  # Find default gateway interface and IP for eth0
+  ETH0_GATEWAY=$(ip route show default dev eth0 | awk '/default/ {print $3}' || true)
+  if [[ -n "$ETH0_GATEWAY" ]]; then
+    ip route add "$WG_ENDPOINT_IP"/32 via "$ETH0_GATEWAY" dev eth0 || true
+  fi
+fi
+
+# Set routing rules using fwmark (0xca6c from wg setconf logs)
+log "Setting WireGuard fwmark policy routing"
+
+# Create routing table 51820 for VPN marked traffic
+ip rule add not fwmark 0xca6c lookup 51820 || true
+ip rule add table main suppress_prefixlength 0 || true
+ip route add default dev wg0 table 51820 || true
+
+# Verify current routing rules and tables
 sysctl net.ipv4.ip_forward
 sysctl net.ipv6.conf.all.forwarding
+ip rule show
+ip route show table 51820
+
 iptables -L -v
 iptables -t nat -L -v
 
@@ -228,7 +251,7 @@ PROXY_PORT="${PROXY_PORT:-1080}"
 log "Starting SOCKS5 proxy on port $PROXY_PORT"
 microsocks -p "$PROXY_PORT" -i 0.0.0.0 &
 
-# Status
+# Show WireGuard status or fallback
 if command -v wg >/dev/null 2>&1; then
   wg show
 else
