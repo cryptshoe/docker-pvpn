@@ -181,6 +181,23 @@ chmod 600 "$CONF_DST"
 log "Bringing up WireGuard interface: wg0"
 wg-quick up wg0
 
+# Ensure IP forwarding is enabled for IPv4/IPv6
+log "Enabling IP forwarding"
+sysctl -w net.ipv4.ip_forward=1 >/dev/null
+sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null || true
+
+# Flush any existing NAT/FORWARD rules (optional - for clean state)
+iptables -F
+iptables -t nat -F
+
+# Allow forwarding between wg0 and eth0
+log "Configuring iptables forwarding and NAT for wg0 <-> eth0"
+iptables -A FORWARD -i wg0 -o eth0 -j ACCEPT
+iptables -A FORWARD -i eth0 -o wg0 -j ACCEPT
+
+# Masquerade outbound traffic via the tunnel
+iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
+
 # Apply DNS by writing /etc/resolv.conf directly when enabled
 if [[ "$WG_DNS" =~ ^(on|true|1|yes)$ && -n "${DNS_SERVERS:-}" ]]; then
   if [ -w /etc/resolv.conf ]; then
