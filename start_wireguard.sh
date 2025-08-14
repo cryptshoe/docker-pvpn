@@ -193,11 +193,15 @@ iptables -t nat -F
 iptables -t mangle -F
 iptables -X
 
-# Set up iptables forwarding and NAT rules
+# Allow forwarding between WireGuard device and main interface
 log "Configuring iptables forwarding and NAT for wg0 <-> eth0"
 iptables -A FORWARD -i wg0 -o eth0 -j ACCEPT
 iptables -A FORWARD -i eth0 -o wg0 -j ACCEPT
-iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE
+
+# Masquerade outbound traffic over WireGuard interface,
+# but exclude the VPN DNS server (10.2.0.1) to avoid breaking DNS resolution
+WG_DNS_IP="10.2.0.1"
+iptables -t nat -A POSTROUTING ! -d "$WG_DNS_IP" -o wg0 -j MASQUERADE
 
 # WireGuard Routing Policy Setup
 # Extract WireGuard endpoint IP to add route for it via eth0 gateway to avoid routing loop
